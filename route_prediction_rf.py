@@ -35,51 +35,54 @@ def fetch_bin_data(bin_id):
     return df
 
 # Predict overflow using Random Forest
-def predict_overflow(df, days_ahead=7):
+def predict_overflow(df, days_ahead=7, bin_max=50):
     import numpy as np
+    from sklearn.ensemble import RandomForestClassifier
+    from datetime import datetime, timedelta
 
     if df.empty:
-        return [
-            {"date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-             "predicted_overflow": 0.0,
-             "collection_needed": False}
-            for i in range(days_ahead)
-        ]
+        return [{"date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
+                 "predicted_overflow": 0,
+                 "collection_needed": False} for i in range(days_ahead)]
 
+    df = df.sort_values("created_at")
     df['day'] = pd.to_datetime(df['created_at']).dt.dayofyear
+    df['diff'] = df['weight'].diff().fillna(0)
+
+    # Features and target
     X = df[['day', 'weight']].values
-    y = (df['weight'] >= 50).astype(int)
+    y = (df['weight'] >= bin_max).astype(int).values
 
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    df = df.sort_values('created_at')
-    df['diff'] = df['weight'].diff().fillna(0)
-    increments = df['diff'].rolling(7, min_periods=1).mean().tolist()
     last_weight = df['weight'].iloc[-1]
     last_day = df['day'].iloc[-1]
+
+    # Use rolling 3-step average of increments for realistic growth
+    increments = df['diff'].rolling(3, min_periods=1).mean().tolist()
+    last_increment = increments[-1] if increments else 0.5
 
     predictions = []
     for i in range(1, days_ahead + 1):
         future_day = last_day + i
-        increment = increments[-1] if increments else 0
-        noise = np.random.uniform(-0.5, 0.5)
-        future_weight = min(max(last_weight + increment + noise, 0), 50)
+        future_weight = min(max(last_weight + last_increment, 0), bin_max)
 
-        # Safe overflow probability
-        if model.classes_.size == 1:
-            pred_prob = 0.0 if model.classes_[0] == 0 else 1.0
-        else:
-            pred_prob = float(model.predict_proba([[future_day, future_weight]])[0][1])
+        try:
+            proba = model.predict_proba([[future_day, future_weight]])[0]
+            pred_prob = proba[1] if len(proba) > 1 else 0
+        except Exception:
+            pred_prob = 0
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-            "predicted_overflow": pred_prob,
-            "collection_needed": pred_prob >= 0.5
+            "predicted_overflow": round(pred_prob * 100, 2),
+            "collection_needed": pred_prob >= 0.5,
+            "predicted_weight": round(future_weight, 2)
         })
 
         last_weight = future_weight
-        increments.append(increment)
+        last_increment = last_increment * (0.9 + 0.2*np.random.rand())  # small variation
 
     return predictions
 
