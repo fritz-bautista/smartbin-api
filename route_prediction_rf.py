@@ -40,44 +40,44 @@ def fetch_bin_data(bin_id):
 def predict_overflow(df, days_ahead=7, bin_max=50):
     if df.empty:
         return [
-            {"date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-             "predicted_overflow": 0.0,
-             "collection_needed": False}
+            {
+                "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
+                "predicted_overflow": 0.0,
+                "collection_needed": False,
+                "predicted_weight": 0.0,
+                "predicted_level": 0.0
+            }
             for i in range(days_ahead)
         ]
 
-    # Prepare features
     df['day'] = pd.to_datetime(df['created_at']).dt.dayofyear
     X = df[['day']].values
     y = df['weight'].values
 
-    # Train RandomForestRegressor
+    from sklearn.ensemble import RandomForestRegressor
     model = RandomForestRegressor(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    last_day = df['day'].iloc[-1]
-    predictions = []
-    last_weight = df['weight'].iloc[-1]
+    last_day = int(df['day'].iloc[-1])
+    last_weight = float(df['weight'].iloc[-1])
 
-    # Calculate average daily increment
     df_sorted = df.sort_values('created_at')
     df_sorted['diff'] = df_sorted['weight'].diff().fillna(0)
-    daily_increment = df_sorted['diff'].mean()
+    daily_increment = float(df_sorted['diff'].mean())
 
+    predictions = []
     for i in range(1, days_ahead + 1):
         future_day = last_day + i
-        # Predict weight using regressor + trend
-        predicted_weight = model.predict(np.array([[future_day]]))[0]
-        # Add incremental trend (optional for smoother prediction)
+        predicted_weight = float(model.predict([[future_day]])[0])
         predicted_weight = min(max(predicted_weight + daily_increment, 0), bin_max)
 
         predicted_level = (predicted_weight / bin_max) * 100
         overflow_probability = min(predicted_level / 100, 1.0)
-        collection_needed = overflow_probability >= 0.5
+        collection_needed = bool(overflow_probability >= 0.5)
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-            "predicted_overflow": round(overflow_probability * 100, 2),  # %
+            "predicted_overflow": round(float(overflow_probability * 100), 2),
             "collection_needed": collection_needed,
             "predicted_weight": round(predicted_weight, 2),
             "predicted_level": round(predicted_level, 2)
@@ -86,6 +86,7 @@ def predict_overflow(df, days_ahead=7, bin_max=50):
         last_weight = predicted_weight
 
     return predictions
+
 
 @app.post("/predict")
 def route_prediction(req: PredictionRequest):
