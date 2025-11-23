@@ -73,16 +73,19 @@ def predict_overflow(df, days_ahead=7, bin_max=50):
     for i in range(1, days_ahead + 1):
         # Predict future weight and level
         future_weight = min(max(last_weight + weight_inc, 0), bin_max)
-        future_level = min(max(last_level + level_inc, 0), 100)  # percent
+        # Clamp future level between 0 and 100
+        future_level = min(max(last_level + level_inc, 0), 100)
 
-        overflow_probability = min(future_level / 100, 1.0)  # 0–1
+        # Overflow probability is just level / 100
+        overflow_probability = future_level / 100  # 0–1
+
         collection_needed = overflow_probability >= 0.8
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
             "predicted_weight": round(future_weight, 2),
             "predicted_level": round(future_level, 2),
-            "predicted_overflow": round(overflow_probability * 100, 2),
+            "predicted_overflow": round(overflow_probability * 100, 2),  # now always <=100%
             "collection_needed": collection_needed
         })
 
