@@ -50,27 +50,30 @@ def predict_overflow(df, days_ahead=7, bin_max=50):
             for i in range(days_ahead)
         ]
 
-    # Calculate historical daily increments (realistic)
+    # Ensure datetime format
+    df['created_at'] = pd.to_datetime(df['created_at'])
     df_sorted = df.sort_values('created_at')
-    df_sorted['diff'] = df_sorted['weight'].diff().fillna(0)
-    daily_increment = float(df_sorted['diff'].mean())
+
+    # Aggregate by day (take max weight per day)
+    daily_df = df_sorted.groupby(df_sorted['created_at'].dt.date).agg({'weight':'max'}).reset_index()
+
+    # Calculate realistic daily increment
+    daily_df['diff'] = daily_df['weight'].diff().fillna(0)
+    daily_increment = float(daily_df['diff'].mean())
     
-    # Take last known values
-    last_weight = float(df_sorted['weight'].iloc[-1])
-    
+    last_weight = float(daily_df['weight'].iloc[-1])
+
     predictions = []
     for i in range(1, days_ahead + 1):
-        # Predict next day weight using historical daily increment
+        # Predict next day weight
         future_weight = min(last_weight + daily_increment, bin_max)
         future_level = (future_weight / bin_max) * 100
-
-        # Overflow probability is 1 if near full, else scaled 0-1
-        overflow_probability = min(future_level / 100, 1.0)
-        collection_needed = overflow_probability >= 0.8  # Only collect if 80% full
+        overflow_probability = min(future_level / 100, 1.0)  # capped at 1
+        collection_needed = overflow_probability >= 0.8  # collect if >= 80%
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-            "predicted_overflow": round(overflow_probability * 100, 2),  # as %
+            "predicted_overflow": round(overflow_probability * 100, 2),
             "collection_needed": collection_needed,
             "predicted_weight": round(future_weight, 2),
             "predicted_level": round(future_level, 2)
@@ -79,6 +82,7 @@ def predict_overflow(df, days_ahead=7, bin_max=50):
         last_weight = future_weight
 
     return predictions
+
 
 @app.post("/predict")
 def route_prediction(req: PredictionRequest):
