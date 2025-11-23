@@ -1,0 +1,8 @@
+{
+  "build": {
+    "builder": "NIXPACKS"
+  },
+  "deploy": {
+    "startCommand": "uvicorn route_prediction_rf:app --host 0.0.0.0 --port $PORT"
+  }
+}
