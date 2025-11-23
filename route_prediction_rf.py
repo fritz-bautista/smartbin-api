@@ -36,49 +36,56 @@ def fetch_bin_data(bin_id):
 
 # Predict overflow using Random Forest
 def predict_overflow(df, days_ahead=1):
-    from datetime import datetime, timedelta
-    import pandas as pd
+    """
+    Predicts future overflow probabilities for the next `days_ahead` days.
+    Uses historical weight changes to simulate realistic future weights.
+    """
     from sklearn.ensemble import RandomForestClassifier
+    from datetime import datetime, timedelta
+    import numpy as np
 
     if df.empty:
-        # No past data: return zeros
+        # No data → return empty predictions
         return [
-            {
-                "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-                "predicted_overflow": 0.0,
-                "collection_needed": False
-            }
+            {"date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
+             "predicted_overflow": 0.0,
+             "collection_needed": False}
             for i in range(days_ahead)
         ]
 
-    # Prepare features
+    # --- Prepare features ---
     df['day'] = pd.to_datetime(df['created_at']).dt.dayofyear
     X = df[['day', 'weight']].values
     y = (df['weight'] >= 50).astype(int)  # overflow threshold 50kg
 
+    # --- Train model ---
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
 
-    predictions = []
-    last_day = df['day'].iloc[-1]
+    # --- Compute historical daily increments ---
+    df = df.sort_values('created_at')
+    df['diff'] = df['weight'].diff().fillna(0)
+    
+    # Use a rolling window of last 7 increments for more stability
+    increments = df['diff'].rolling(7, min_periods=1).mean().tolist()
+
+    # --- Start simulation from last known weight and day ---
     last_weight = df['weight'].iloc[-1]
+    last_day = df['day'].iloc[-1]
 
-    mean_inc = df['weight'].diff().mean()
-    mean_inc = mean_inc if not pd.isna(mean_inc) else 0.0
-
+    predictions = []
     for i in range(1, days_ahead + 1):
         future_day = last_day + i
-        future_weight = min(last_weight + mean_inc, 50)
 
-        proba = model.predict_proba([[future_day, future_weight]])[0]
-        # Handle single-class situation
-        if len(proba) == 1:
-            if model.classes_[0] == 1:
-                pred_prob = 1.0
-            else:
-                pred_prob = 0.0
-        else:
-            pred_prob = proba[1]
+        # Use the most recent increment from history
+        increment = increments[-1] if increments else 0
+
+        # Simulate realistic weight growth
+        future_weight = last_weight + increment
+        future_weight = min(max(future_weight, 0), 50)  # clamp between 0 and capacity
+
+        # Predict overflow probability
+        pred_prob = model.predict_proba([[future_day, future_weight]])[0][1]
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
@@ -86,7 +93,11 @@ def predict_overflow(df, days_ahead=1):
             "collection_needed": pred_prob >= 0.5
         })
 
+        # Update last_weight for next day simulation
         last_weight = future_weight
+
+        # Optionally update increments list if you want dynamic simulation
+        increments.append(increment)
 
     return predictions
 
