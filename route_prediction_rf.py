@@ -66,6 +66,12 @@ def predict_overflow(df, days_ahead=1):
 
 @app.post("/predict")
 def route_prediction(req: PredictionRequest):
-    df = fetch_bin_data(req.bin_id)
-    predictions = predict_overflow(df, req.days_ahead)
-    return {"bin_id": req.bin_id, "predictions": predictions}
+    try:
+        df = fetch_bin_data(req.bin_id)
+        predictions = predict_overflow(df, req.days_ahead)
+        return {"bin_id": req.bin_id, "predictions": predictions}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
