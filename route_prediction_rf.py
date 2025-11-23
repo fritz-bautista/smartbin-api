@@ -73,5 +73,7 @@ def route_prediction(req: PredictionRequest):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        # Always return predictions key, even if empty
+        return {"bin_id": req.bin_id, "predictions": [], "error": str(e)}
+
 
