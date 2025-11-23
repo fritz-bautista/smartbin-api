@@ -50,43 +50,35 @@ def predict_overflow(df, days_ahead=7, bin_max=50):
             for i in range(days_ahead)
         ]
 
-    df['day'] = pd.to_datetime(df['created_at']).dt.dayofyear
-    X = df[['day']].values
-    y = df['weight'].values
-
-    from sklearn.ensemble import RandomForestRegressor
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
-
-    last_day = int(df['day'].iloc[-1])
-    last_weight = float(df['weight'].iloc[-1])
-
+    # Calculate historical daily increments (realistic)
     df_sorted = df.sort_values('created_at')
     df_sorted['diff'] = df_sorted['weight'].diff().fillna(0)
     daily_increment = float(df_sorted['diff'].mean())
-
+    
+    # Take last known values
+    last_weight = float(df_sorted['weight'].iloc[-1])
+    
     predictions = []
     for i in range(1, days_ahead + 1):
-        future_day = last_day + i
-        predicted_weight = float(model.predict([[future_day]])[0])
-        predicted_weight = min(max(predicted_weight + daily_increment, 0), bin_max)
+        # Predict next day weight using historical daily increment
+        future_weight = min(last_weight + daily_increment, bin_max)
+        future_level = (future_weight / bin_max) * 100
 
-        predicted_level = (predicted_weight / bin_max) * 100
-        overflow_probability = min(predicted_level / 100, 1.0)
-        collection_needed = bool(overflow_probability >= 0.5)
+        # Overflow probability is 1 if near full, else scaled 0-1
+        overflow_probability = min(future_level / 100, 1.0)
+        collection_needed = overflow_probability >= 0.8  # Only collect if 80% full
 
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-            "predicted_overflow": round(float(overflow_probability * 100), 2),
+            "predicted_overflow": round(overflow_probability * 100, 2),  # as %
             "collection_needed": collection_needed,
-            "predicted_weight": round(predicted_weight, 2),
-            "predicted_level": round(predicted_level, 2)
+            "predicted_weight": round(future_weight, 2),
+            "predicted_level": round(future_level, 2)
         })
 
-        last_weight = predicted_weight
+        last_weight = future_weight
 
     return predictions
-
 
 @app.post("/predict")
 def route_prediction(req: PredictionRequest):
