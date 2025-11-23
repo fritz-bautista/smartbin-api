@@ -36,9 +36,22 @@ def fetch_bin_data(bin_id):
 
 # Predict overflow using Random Forest
 def predict_overflow(df, days_ahead=1):
-    if df.empty:
-        return [{"date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"), "overflow_prob": 0.0, "collection_needed": False} for i in range(days_ahead)]
+    from datetime import datetime, timedelta
+    import pandas as pd
+    from sklearn.ensemble import RandomForestClassifier
 
+    if df.empty:
+        # No past data: return zeros
+        return [
+            {
+                "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
+                "predicted_overflow": 0.0,
+                "collection_needed": False
+            }
+            for i in range(days_ahead)
+        ]
+
+    # Prepare features
     df['day'] = pd.to_datetime(df['created_at']).dt.dayofyear
     X = df[['day', 'weight']].values
     y = (df['weight'] >= 50).astype(int)  # overflow threshold 50kg
@@ -50,19 +63,33 @@ def predict_overflow(df, days_ahead=1):
     last_day = df['day'].iloc[-1]
     last_weight = df['weight'].iloc[-1]
 
+    mean_inc = df['weight'].diff().mean()
+    mean_inc = mean_inc if not pd.isna(mean_inc) else 0.0
+
     for i in range(1, days_ahead + 1):
         future_day = last_day + i
-        # assume weight increases by mean daily increment
-        mean_inc = df['weight'].diff().mean()
         future_weight = min(last_weight + mean_inc, 50)
-        pred_prob = model.predict_proba([[future_day, future_weight]])[0][1]
+
+        proba = model.predict_proba([[future_day, future_weight]])[0]
+        # Handle single-class situation
+        if len(proba) == 1:
+            if model.classes_[0] == 1:
+                pred_prob = 1.0
+            else:
+                pred_prob = 0.0
+        else:
+            pred_prob = proba[1]
+
         predictions.append({
             "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
             "predicted_overflow": float(pred_prob),
             "collection_needed": pred_prob >= 0.5
         })
+
         last_weight = future_weight
+
     return predictions
+
 
 @app.post("/predict")
 def route_prediction(req: PredictionRequest):
